@@ -18,7 +18,7 @@ Open your `.env` file and add/update these variables:
 
 ```env
 # Your MongoDB Atlas connection string
-MONGO_URI=mongodb+srv://your-username:your-password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
+
 
 # Generate these using: python generate_keys.py
 FLASK_SECRET_KEY=your-flask-secret-key-here
