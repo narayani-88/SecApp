@@ -1,9 +1,29 @@
-# Netlify configuration
-# Note: Netlify works best with static sites and serverless functions
-# For Flask apps, consider Railway, Render, or Fly.io instead
+# ⚠️ NETLIFY DOES NOT SUPPORT FLASK APPLICATIONS ⚠️
+#
+# Your error: "dependency_installation script returned non-zero exit code: 1"
+# This happens because:
+# 1. Netlify's build system is designed for Node.js/JavaScript projects
+# 2. Your app is Python/Flask, which requires a full Python runtime
+# 3. Netlify Functions (serverless) can't handle full Flask apps with:
+#    - Multiple routes (/send, /view, /pairing, etc.)
+#    - Session management
+#    - File uploads
+#    - Persistent database connections
+#
+# ✅ SOLUTION: Use Railway or Render (they support Flask natively)
+#
+# Railway (Recommended - 2 minutes):
+# 1. Go to https://railway.app
+# 2. New Project → Deploy from GitHub
+# 3. Select your SecApp repo
+# 4. Add env vars: MONGO_URI, FLASK_SECRET_KEY, FERNET_KEY
+# 5. Done! Railway auto-detects Flask and deploys.
+#
+# See DEPLOY.md for detailed instructions.
 
 [build]
-  command = "pip install -r requirements.txt"
+  # This intentionally fails to prevent wasted build attempts
+  command = "echo 'ERROR: Netlify does not support Flask apps. Use Railway instead: https://railway.app' && exit 1"
 
-# For Flask deployment on Netlify, you'll need to use serverless functions
-# Or deploy to: Railway, Render, Fly.io, or Heroku (see Procfile)
+# If you want to disable Netlify builds entirely, remove this file
+# or set build command to: "echo 'Use Railway' && exit 0"
