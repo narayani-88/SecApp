@@ -1,0 +1,9 @@
+# Netlify configuration
+# Note: Netlify works best with static sites and serverless functions
+# For Flask apps, consider Railway, Render, or Fly.io instead
+
+[build]
+  command = "pip install -r requirements.txt"
+
+# For Flask deployment on Netlify, you'll need to use serverless functions
+# Or deploy to: Railway, Render, Fly.io, or Heroku (see Procfile)

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: secapp
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: FLASK_SECRET_KEY
+        sync: false
+      - key: FERNET_KEY
+        sync: false
+      - key: PORT
+        value: 10000
