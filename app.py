@@ -1,7 +1,7 @@
 import os
 import secrets
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from flask import Flask, request, redirect, url_for, render_template_string, session, send_file, jsonify, abort  # type: ignore
 from werkzeug.utils import secure_filename  # type: ignore
@@ -26,6 +26,14 @@ VIEW_SECONDS = int(os.environ.get("VIEW_SECONDS", "10"))
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
+
+# Configure session cookies for mobile/HTTPS compatibility
+# Render uses HTTPS, so enable secure cookies in production
+is_production = os.environ.get('RENDER', '').lower() == 'true' or os.environ.get('RAILWAY_ENVIRONMENT', '') != ''
+app.config['SESSION_COOKIE_SECURE'] = is_production  # Secure cookies for HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Works better on mobile browsers
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)  # Sessions last 30 days
 
 # Generate or validate Fernet key
 try:
@@ -627,9 +635,9 @@ REGISTER_HTML = """
   {% endif %}
   <form action="/register" method="post">
     <label>📧 Email:</label>
-    <input type="email" name="email" placeholder="your@email.com" required>
+    <input type="email" name="email" placeholder="your@email.com" required autocomplete="email" inputmode="email">
     <label>🔒 Password:</label>
-    <input type="password" name="password" placeholder="Enter a strong password" required>
+    <input type="password" name="password" placeholder="Enter a strong password" required autocomplete="new-password">
     <button type="submit">🚀 Create Account</button>
   </form>
   <div class="back-link">
@@ -769,9 +777,9 @@ LOGIN_HTML = """
   {% endif %}
   <form action="/login" method="post">
     <label>📧 Email:</label>
-    <input type="email" name="email" placeholder="your@email.com" required>
+    <input type="email" name="email" placeholder="your@email.com" required autocomplete="email" inputmode="email">
     <label>🔒 Password:</label>
-    <input type="password" name="password" placeholder="Enter your password" required>
+    <input type="password" name="password" placeholder="Enter your password" required autocomplete="current-password">
     <button type="submit">🚀 Login</button>
   </form>
   <div class="back-link">
@@ -845,12 +853,22 @@ def register():
         return render_template_string(REGISTER_HTML)
     if users is None:
         return get_db_error_msg()
-    email_val = request.form.get("email")
-    pw_val = request.form.get("password")
+    
+    # Get form data - handle both form and JSON
+    email_val = request.form.get("email") or (request.get_json(silent=True) or {}).get("email", "")
+    pw_val = request.form.get("password") or (request.get_json(silent=True) or {}).get("password", "")
+    
     if not email_val or not pw_val:
         return render_template_string(REGISTER_HTML, error="❌ Email and password are required")
+    
     email = email_val.strip().lower()
+    if not email or "@" not in email:
+        return render_template_string(REGISTER_HTML, error="❌ Please enter a valid email address")
+    
     pw = pw_val.encode()
+    if len(pw) < 3:
+        return render_template_string(REGISTER_HTML, error="❌ Password must be at least 3 characters")
+    
     try:
         if users.find_one({"email": email}):
             return render_template_string(REGISTER_HTML, error="❌ This email is already registered. Try logging in instead!")
@@ -864,9 +882,14 @@ def register():
             "pairing_code": pairing_code
         })
         session['user_id'] = uid
+        session.permanent = True  # Make session persistent
         return redirect(url_for('index'))
-    except (ServerSelectionTimeoutError, ConnectionFailure):
+    except (ServerSelectionTimeoutError, ConnectionFailure) as e:
+        print(f"Database error in register: {e}")
         return get_db_error_msg()
+    except Exception as e:
+        print(f"Unexpected error in register: {e}")
+        return render_template_string(REGISTER_HTML, error=f"❌ Registration failed: {str(e)}")
 
 @app.route("/login", methods=["GET","POST"])
 def login():
@@ -874,20 +897,34 @@ def login():
         return render_template_string(LOGIN_HTML)
     if users is None:
         return get_db_error_msg()
-    email_val = request.form.get("email")
-    pw_val = request.form.get("password")
+    
+    # Get form data - handle both form and JSON
+    email_val = request.form.get("email") or (request.get_json(silent=True) or {}).get("email", "")
+    pw_val = request.form.get("password") or (request.get_json(silent=True) or {}).get("password", "")
+    
     if not email_val or not pw_val:
         return render_template_string(LOGIN_HTML, error="❌ Email and password are required")
+    
     email = email_val.strip().lower()
+    if not email or "@" not in email:
+        return render_template_string(LOGIN_HTML, error="❌ Please enter a valid email address")
+    
     pw = pw_val.encode()
     try:
         u = users.find_one({"email": email})
-        if not u or not bcrypt.checkpw(pw, u['password']):
+        if not u:
+            return render_template_string(LOGIN_HTML, error="❌ Invalid email or password. Please try again or register a new account.")
+        if not bcrypt.checkpw(pw, u.get('password', b'')):
             return render_template_string(LOGIN_HTML, error="❌ Invalid email or password. Please try again or register a new account.")
         session['user_id'] = u['_id']
+        session.permanent = True  # Make session persistent
         return redirect(url_for('index'))
-    except (ServerSelectionTimeoutError, ConnectionFailure):
+    except (ServerSelectionTimeoutError, ConnectionFailure) as e:
+        print(f"Database error in login: {e}")
         return get_db_error_msg()
+    except Exception as e:
+        print(f"Unexpected error in login: {e}")
+        return render_template_string(LOGIN_HTML, error=f"❌ Login failed: {str(e)}")
 
 @app.route("/logout")
 def logout():
