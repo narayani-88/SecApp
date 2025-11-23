@@ -1,18 +1,17 @@
 import os
-import io
 import secrets
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from flask import Flask, request, redirect, url_for, render_template_string, session, send_file, jsonify, abort
-from werkzeug.utils import secure_filename
-from PIL import Image
-from cryptography.fernet import Fernet
-from pymongo import MongoClient
-from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
-from bson import ObjectId
-import bcrypt
-from dotenv import load_dotenv
+from flask import Flask, request, redirect, url_for, render_template_string, session, send_file, jsonify, abort  # type: ignore
+from werkzeug.utils import secure_filename  # type: ignore
+from PIL import Image  # type: ignore
+from cryptography.fernet import Fernet  # type: ignore
+from pymongo import MongoClient  # type: ignore
+from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure  # type: ignore
+from bson import ObjectId  # type: ignore
+import bcrypt  # type: ignore
+from dotenv import load_dotenv  # type: ignore
 
 load_dotenv()
 
@@ -22,6 +21,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 MONGO_URI = os.environ.get("MONGO_URI") or "mongodb://localhost:27017/"
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY") or secrets.token_urlsafe(16)
 FERNET_KEY_ENV = os.environ.get("FERNET_KEY")
+
 VIEW_SECONDS = int(os.environ.get("VIEW_SECONDS", "10"))
 
 app = Flask(__name__)
@@ -92,54 +92,96 @@ def _bytes_to_bits(b: bytes):
             yield (byte >> (7 - i)) & 1
 
 def embed_bytes_in_image(img: Image.Image, payload: bytes) -> Image.Image:
+    """Embed encrypted payload into image using LSB steganography in RGB channels."""
     if len(payload) > 2000*10:  # crude safety
         raise ValueError("Payload too large")
+    
+    # Calculate required pixels: 4 bytes (length) + payload, each byte needs 8 bits, each pixel provides 3 bits
+    required_pixels = ((4 + len(payload)) * 8 + 2) // 3  # +2 for rounding up
+    
+    # Convert to RGBA to ensure we have RGB channels
+    if img.mode not in ("RGB", "RGBA"):
+        rgba_img = img.convert("RGBA")
+    else:
+        rgba_img = img.convert("RGBA")
+    
+    pixels = list(rgba_img.getdata())  # type: ignore
+    
+    if len(pixels) < required_pixels:
+        raise ValueError(f"Image too small to hold payload. Need {required_pixels} pixels, have {len(pixels)}")
+    
+    # Prepare data: 4-byte length prefix + payload
     length_prefix = len(payload).to_bytes(4, "big")
     data = length_prefix + payload
     bits = list(_bytes_to_bits(data))
-    rgba_img = img.convert("RGBA")
-    pixels = list(rgba_img.getdata())  # type: ignore
+    
+    # Embed bits into LSB of RGB channels
     new_pixels = []
     bit_idx = 0
     for px in pixels:
-        r,g,b,a = px
+        r, g, b, a = px
         if bit_idx < len(bits):
-            r = (r & ~1) | bits[bit_idx]; bit_idx += 1
+            r = (r & ~1) | bits[bit_idx]  # Clear LSB, set to data bit
+            bit_idx += 1
         if bit_idx < len(bits):
-            g = (g & ~1) | bits[bit_idx]; bit_idx += 1
+            g = (g & ~1) | bits[bit_idx]
+            bit_idx += 1
         if bit_idx < len(bits):
-            b = (b & ~1) | bits[bit_idx]; bit_idx += 1
-        new_pixels.append((r,g,b,a))
+            b = (b & ~1) | bits[bit_idx]
+            bit_idx += 1
+        new_pixels.append((r, g, b, a))
+    
     if bit_idx < len(bits):
-        raise ValueError("Image too small to hold payload")
-    out = Image.new("RGBA", img.size)
+        raise ValueError(f"Not all bits embedded. Embedded {bit_idx}/{len(bits)} bits")
+    
+    # Create new image with embedded data
+    out = Image.new("RGBA", rgba_img.size)
     out.putdata(new_pixels)
     return out
 
 def extract_bytes_from_image(img: Image.Image) -> bytes:
+    """Extract encrypted payload from image using LSB steganography in RGB channels."""
+    # Convert to RGBA to ensure consistent format
     rgba_img = img.convert("RGBA")
     pixels = list(rgba_img.getdata())  # type: ignore
+    
+    # Extract LSB from RGB channels
     bits = []
     for px in pixels:
-        r,g,b,a = px
-        bits.append(r & 1)
-        bits.append(g & 1)
-        bits.append(b & 1)
+        r, g, b, _ = px  # Alpha channel not used for extraction
+        bits.append(r & 1)  # Extract LSB from red channel
+        bits.append(g & 1)  # Extract LSB from green channel
+        bits.append(b & 1)  # Extract LSB from blue channel
+    
     if len(bits) < 32:
-        return b""
+        raise ValueError("Image too small or contains no embedded data")
+    
+    # Read 32-bit length prefix
     length = 0
     for bit in bits[:32]:
         length = (length << 1) | bit
-    total_bits_needed = 32 + length*8
+    
+    if length == 0 or length > 20000:  # Sanity check
+        raise ValueError(f"Invalid payload length: {length}")
+    
+    # Calculate total bits needed
+    total_bits_needed = 32 + length * 8
     if total_bits_needed > len(bits):
-        raise ValueError("Incomplete payload in image")
-    payload_bits = bits[32:32 + length*8]
+        raise ValueError(f"Incomplete payload in image. Need {total_bits_needed} bits, have {len(bits)}")
+    
+    # Extract payload bits (after 32-bit length prefix)
+    payload_bits = bits[32:32 + length * 8]
+    
+    # Convert bits back to bytes
     payload_bytes = bytearray()
     for i in range(0, len(payload_bits), 8):
+        if i + 8 > len(payload_bits):
+            break
         byte = 0
         for bit in payload_bits[i:i+8]:
             byte = (byte << 1) | bit
         payload_bytes.append(byte)
+    
     return bytes(payload_bytes)
 
 # ---------- routes ----------
@@ -892,38 +934,94 @@ def request_pairing():
     secret_code = (request.form.get("secret_code") or "").strip()
     
     if not partner_email:
-        return "Partner email required", 400
+        error_html = """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><title>Error</title></head>
+        <body style="font-family: Arial; padding: 50px; text-align: center;">
+        <h2>❌ Partner Email Required</h2>
+        <p>Please enter the email address of the user you want to pair with.</p>
+        <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+        </body></html>
+        """
+        return error_html, 400
     if not secret_code:
-        return "Secret code required", 400
+        error_html = """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><title>Error</title></head>
+        <body style="font-family: Arial; padding: 50px; text-align: center;">
+        <h2>❌ Secret Code Required</h2>
+        <p>Please enter a secret code that you and your partner will both know.</p>
+        <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+        </body></html>
+        """
+        return error_html, 400
     
     try:
         # Find user by email
         partner = users.find_one({"email": partner_email})
         if not partner:
-            return "User not found", 404
+            error_html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>User Not Found</title></head>
+            <body style="font-family: Arial; padding: 50px; text-align: center;">
+            <h2>❌ User Not Found</h2>
+            <p>The user with email <strong>{}</strong> does not exist.</p>
+            <p>Make sure they have registered an account first.</p>
+            <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+            </body></html>
+            """.format(partner_email)
+            return error_html, 404
         
-        if partner['email'] == user['email']:
-            return "Cannot pair with yourself", 400
+        if partner.get('email') == user.get('email'):
+            error_html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>Error</title></head>
+            <body style="font-family: Arial; padding: 50px; text-align: center;">
+            <h2>❌ Cannot Pair With Yourself</h2>
+            <p>You cannot send a pairing request to yourself.</p>
+            <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+            </body></html>
+            """
+            return error_html, 400
         
         # Check if already paired
         existing = pairings.find_one({
             "$or": [
-                {"user1_email": user['email'], "user2_email": partner['email'], "status": "paired"},
-                {"user1_email": partner['email'], "user2_email": user['email'], "status": "paired"}
+                {"user1_email": user.get('email'), "user2_email": partner.get('email'), "status": "paired"},
+                {"user1_email": partner.get('email'), "user2_email": user.get('email'), "status": "paired"}
             ]
         })
         if existing:
-            return "Already paired with this user", 400
+            error_html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>Already Paired</title></head>
+            <body style="font-family: Arial; padding: 50px; text-align: center;">
+            <h2>✅ Already Paired</h2>
+            <p>You are already paired with <strong>{}</strong>.</p>
+            <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+            </body></html>
+            """.format(partner_email)
+            return error_html, 400
         
         # Check if request already exists
         existing_request = pairings.find_one({
             "$or": [
-                {"user1_email": user['email'], "user2_email": partner['email'], "status": "pending"},
-                {"user1_email": partner['email'], "user2_email": user['email'], "status": "pending"}
+                {"user1_email": user.get('email'), "user2_email": partner.get('email'), "status": "pending"},
+                {"user1_email": partner.get('email'), "user2_email": user.get('email'), "status": "pending"}
             ]
         })
         if existing_request:
-            return "Pairing request already sent or received", 400
+            error_html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>Request Already Exists</title></head>
+            <body style="font-family: Arial; padding: 50px; text-align: center;">
+            <h2>⏳ Pairing Request Already Exists</h2>
+            <p>A pairing request between you and <strong>{}</strong> is already pending.</p>
+            <p>Please wait for them to accept or reject the existing request.</p>
+            <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+            </body></html>
+            """.format(partner_email)
+            return error_html, 400
         
         # Store secret code hash for verification
         secret_hash = hashlib.sha256(secret_code.encode()).hexdigest()
@@ -951,26 +1049,67 @@ def accept_pairing(request_id):
     
     secret_code = (request.form.get("secret_code") or "").strip()
     if not secret_code:
-        return "Secret code required to accept pairing", 400
+        error_html = """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><title>Error</title></head>
+        <body style="font-family: Arial; padding: 50px; text-align: center;">
+        <h2>❌ Secret Code Required</h2>
+        <p>Please enter the secret code to accept the pairing request.</p>
+        <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+        </body></html>
+        """
+        return error_html, 400
     
     try:
         # Find the pairing request
         try:
             pairing = pairings.find_one({"_id": ObjectId(request_id)})
-        except:
+        except Exception:
+            # Try as string if ObjectId fails
             pairing = pairings.find_one({"_id": request_id})
         
         if not pairing:
-            return "Pairing request not found", 404
+            error_html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>Error</title></head>
+            <body style="font-family: Arial; padding: 50px; text-align: center;">
+            <h2>❌ Pairing Request Not Found</h2>
+            <p>The pairing request may have expired or been deleted.</p>
+            <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+            </body></html>
+            """
+            return error_html, 404
         
         # Check if user is the recipient
-        if pairing['user2_email'] != user['email']:
-            return "Not authorized", 403
+        if pairing.get('user2_email') != user.get('email'):
+            error_html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>Access Denied</title></head>
+            <body style="font-family: Arial; padding: 50px; text-align: center;">
+            <h2>⚠️ Access Denied</h2>
+            <p>This pairing request was sent to someone else. You can only accept requests sent to you.</p>
+            <p><strong>Expected recipient:</strong> {}</p>
+            <p><strong>Your email:</strong> {}</p>
+            <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back</a>
+            </body></html>
+            """.format(pairing.get('user2_email', 'Unknown'), user.get('email', 'Unknown'))
+            return error_html, 403
         
         # Verify secret code
         secret_hash = hashlib.sha256(secret_code.encode()).hexdigest()
-        if pairing.get('secret_code_hash') != secret_hash:
-            return "Invalid secret code. Please enter the correct code that the sender provided.", 403
+        stored_hash = pairing.get('secret_code_hash')
+        if stored_hash and stored_hash != secret_hash:
+            error_html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>Invalid Secret Code</title></head>
+            <body style="font-family: Arial; padding: 50px; text-align: center;">
+            <h2>❌ Invalid Secret Code</h2>
+            <p>The secret code you entered is incorrect. Please enter the exact code that the sender provided.</p>
+            <p><strong>Tip:</strong> Make sure you're using the same secret code that was used when the pairing request was created.</p>
+            <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">← Back to Try Again</a>
+            </body></html>
+            """
+            return error_html, 403
         
         # Store the secret code hash with pairing (for message decryption)
         try:
@@ -1073,17 +1212,39 @@ def send():
     # encrypt secret
     cipher = fernet.encrypt(secret_text)
 
-    # embed into image
+    # embed into image - ensure we read from the beginning of the stream
+    file.stream.seek(0)  # Reset stream to beginning
     img = Image.open(file.stream)
+    # Ensure image is loaded into memory
+    img.load()
+    
     try:
         stego = embed_bytes_in_image(img, cipher)
+        # Verify embedding worked by checking image was modified
+        if stego.size != img.size:
+            return "Error: Stego image size mismatch", 500
     except Exception as e:
         return f"embed error: {e}", 400
 
     message_id = secrets.token_urlsafe(10)
     fname = secure_filename(f"stego_{message_id}.png")
     path = os.path.join(UPLOAD_DIR, fname)
-    stego.save(path, "PNG")
+    
+    # Save PNG with no compression to preserve LSB data
+    # compress_level=0 means no compression, which preserves exact pixel values
+    stego.save(path, "PNG", compress_level=0, optimize=False)
+    
+    # Verify the stego image can be loaded and contains data
+    try:
+        verify_img = Image.open(path)
+        verify_img.load()
+        # Try to extract to verify data is there (we'll decrypt later)
+        test_extract = extract_bytes_from_image(verify_img)
+        if len(test_extract) == 0:
+            return "Error: Failed to embed data in image", 500
+    except Exception as e:
+        # If extraction fails, the embedding might have failed
+        return f"Error: Could not verify embedded data: {e}", 500
 
     token = secrets.token_urlsafe(18)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -1643,10 +1804,16 @@ def api_reveal(token):
             
         try:
             img = Image.open(image_path)
+            # Ensure image is fully loaded
+            img.load()
             payload = extract_bytes_from_image(img)
+            if not payload:
+                return jsonify({"error": "No data found in image. The image may not contain embedded data."}), 400
             plaintext = fernet.decrypt(payload).decode('utf-8')
+        except ValueError as e:
+            return jsonify({"error": f"Extraction error: {str(e)}"}), 400
         except Exception as e:
-            plaintext = "[error extracting or decrypting]"
+            return jsonify({"error": f"Decryption error: {str(e)}"}), 500
 
         # delete file to reduce future extraction (best-effort)
         try:

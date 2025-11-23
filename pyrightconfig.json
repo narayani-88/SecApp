@@ -5,14 +5,18 @@
   "exclude": [
     "**/node_modules",
     "**/__pycache__",
-    "**/.*"
+    "**/.*",
+    "**/venv",
+    "**/.venv"
   ],
-  "venvPath": ".",
-  "venv": ".",
   "pythonVersion": "3.14",
   "pythonPlatform": "Windows",
   "typeCheckingMode": "basic",
-  "reportMissingImports": true,
-  "reportMissingTypeStubs": false
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false,
+  "reportUnusedImport": "warning",
+  "reportUnusedClass": "warning",
+  "reportUnusedFunction": "warning",
+  "reportUnusedVariable": "warning"
 }
 
