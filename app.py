@@ -472,17 +472,37 @@ INDEX_HTML = """
       </div>
     {% endif %}
     <hr>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
       <h3 style="margin: 0;">📥 Your Inbox</h3>
       {% if inbox %}
         {% set viewed_count = inbox|selectattr('viewed')|list|length %}
-        {% if viewed_count > 0 %}
-          <form action="/clear-logs" method="post" style="margin: 0;">
-            <button type="submit" style="background: linear-gradient(135deg, #f44336, #d32f2f); padding: 8px 16px; font-size: 14px; margin: 0;">🗑️ Clear Logs ({{ viewed_count }})</button>
-          </form>
+        {% set total_count = inbox|length %}
+        {% if viewed_count > 0 or total_count > 0 %}
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            {% if viewed_count > 0 %}
+              <form action="/clear-logs" method="post" style="margin: 0;" onsubmit="return confirm('Clear {{ viewed_count }} viewed message(s)?');">
+                <button type="submit" style="background: linear-gradient(135deg, #f44336, #d32f2f); padding: 8px 16px; font-size: 14px; margin: 0; border: none; border-radius: 6px; color: white; cursor: pointer; font-weight: 600;">🗑️ Clear Viewed ({{ viewed_count }})</button>
+              </form>
+            {% endif %}
+            {% if total_count > 5 %}
+              <form action="/clear-all" method="post" style="margin: 0;" onsubmit="return confirm('Clear ALL {{ total_count }} messages? This cannot be undone!');">
+                <button type="submit" style="background: linear-gradient(135deg, #ff6b6b, #ee5a6f); padding: 8px 16px; font-size: 14px; margin: 0; border: none; border-radius: 6px; color: white; cursor: pointer; font-weight: 600;">🗑️ Clear All</button>
+              </form>
+            {% endif %}
+          </div>
         {% endif %}
       {% endif %}
     </div>
+    {% if request.args.get('cleared') %}
+      <div style="background: #d4edda; color: #155724; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #28a745;">
+        ✅ Successfully cleared {{ request.args.get('cleared') }} message(s)!
+      </div>
+    {% endif %}
+    {% if request.args.get('error') == 'clear_failed' %}
+      <div style="background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #dc3545;">
+        ❌ Failed to clear messages. Please try again.
+      </div>
+    {% endif %}
     <div class="inbox">
       {% if inbox %}
         <ul>
@@ -868,13 +888,49 @@ def clear_logs():
     
     try:
         # Delete all viewed messages for this user
-        _ = messages.delete_many({
+        # This query covers:
+        # 1. Messages with viewed: True
+        # 2. Messages with viewed_at timestamp (even if viewed field is missing)
+        # 3. Expired messages (older than 24 hours)
+        expired_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        
+        result = messages.delete_many({
             "recipient": user["email"],
-            "viewed": True
+            "$or": [
+                {"viewed": True},
+                {"viewed_at": {"$exists": True}},
+                {"viewed_at": {"$lt": expired_cutoff}}
+            ]
         })
-        return redirect(url_for("index"))
+        
+        deleted_count = result.deleted_count
+        return redirect(url_for("index") + f"?cleared={deleted_count}")
     except (ServerSelectionTimeoutError, ConnectionFailure):
         return get_db_error_msg()
+    except Exception as e:
+        print(f"Error clearing logs: {e}")
+        return redirect(url_for("index") + "?error=clear_failed")
+
+@app.route("/clear-all", methods=["POST"])
+def clear_all():
+    """Clear ALL messages from inbox (viewed and unviewed)"""
+    if db is None or messages is None:
+        return get_db_error_msg()
+    user = current_user()
+    if not user:
+        return redirect(url_for("index"))
+    
+    try:
+        # Delete ALL messages for this user (viewed and unviewed)
+        result = messages.delete_many({
+            "recipient": user["email"]
+        })
+        return redirect(url_for("index") + f"?cleared={result.deleted_count}")
+    except (ServerSelectionTimeoutError, ConnectionFailure):
+        return get_db_error_msg()
+    except Exception as e:
+        print(f"Error clearing all messages: {e}")
+        return redirect(url_for("index") + "?error=clear_failed")
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
@@ -1783,6 +1839,114 @@ def view_token(token):
             """
             return secret_code_html
         
+        # Check if message is already viewed
+        if doc.get("viewed"):
+            # Show clean "already viewed" page without image
+            already_viewed_html = """
+            <!doctype html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>🔒 Message Already Viewed</title>
+            <link rel="icon" type="image/x-icon" href="/favicon.ico">
+            <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #4facfe 75%, #00f2fe 100%);
+                background-size: 400% 400%;
+                animation: gradientShift 15s ease infinite;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+              }
+              @keyframes gradientShift {
+                0% { background-position: 0% 50%; }
+                50% { background-position: 100% 50%; }
+                100% { background-position: 0% 50%; }
+              }
+              .container {
+                background: rgba(255, 255, 255, 0.98);
+                border-radius: 16px;
+                padding: 40px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+                max-width: 500px;
+                width: 100%;
+                text-align: center;
+                animation: slideIn 0.5s ease;
+              }
+              @keyframes slideIn {
+                from { opacity: 0; transform: translateY(-20px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              h1 {
+                color: #667eea;
+                margin-bottom: 20px;
+                font-size: 2.5em;
+              }
+              .icon {
+                font-size: 5em;
+                margin-bottom: 20px;
+                opacity: 0.7;
+              }
+              .message-box {
+                background: #f8f9fa;
+                border: 2px solid #e9ecef;
+                border-radius: 12px;
+                padding: 30px;
+                margin: 25px 0;
+                color: #6c757d;
+                font-size: 16px;
+                line-height: 1.6;
+              }
+              .info {
+                background: #fff3cd;
+                border: 1px solid #ffc107;
+                border-left: 4px solid #ffc107;
+                border-radius: 8px;
+                padding: 15px;
+                margin: 20px 0;
+                color: #856404;
+                font-size: 14px;
+              }
+              a {
+                display: inline-block;
+                margin-top: 25px;
+                padding: 12px 30px;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                color: white;
+                text-decoration: none;
+                border-radius: 10px;
+                font-weight: 600;
+                transition: all 0.3s;
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+              }
+              a:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+              }
+            </style>
+            </head>
+            <body>
+            <div class="container">
+              <div class="icon">🔒</div>
+              <h1>Message Already Viewed</h1>
+              <div class="info">
+                ⚠️ This message has already been viewed and has been permanently deleted for security.
+              </div>
+              <div class="message-box">
+                <p style="margin: 0;">For your security, messages can only be viewed once. Once revealed, they are automatically deleted and cannot be accessed again.</p>
+              </div>
+              <a href="/">← Back to Home</a>
+            </div>
+            </body>
+            </html>
+            """
+            return already_viewed_html
+        
         # Store secret code in session for API reveal
         session[f"secret_code_{doc['message_id']}"] = secret_code
         
@@ -1791,7 +1955,7 @@ def view_token(token):
         try:
             with open("viewer.html", "r", encoding="utf-8") as f:
                 viewer_content = f.read()
-            return render_template_string(viewer_content, image_url=image_url, token=token, secret_code=secret_code)
+            return render_template_string(viewer_content, image_url=image_url, token=token, secret_code=secret_code, already_viewed=False)
         except Exception as e:
             return f"Error loading viewer: {str(e)}", 500
     except (ServerSelectionTimeoutError, ConnectionFailure):

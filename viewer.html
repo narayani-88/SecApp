@@ -69,10 +69,19 @@
       border-radius: 12px;
       overflow: visible;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      transition: transform 0.3s, box-shadow 0.3s;
+      transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
       width: 100%;
       max-width: 100%;
       display: block;
+      max-height: none;
+    }
+    .image-container.hidden {
+      max-height: 0;
+      margin: 0;
+      opacity: 0;
+      overflow: hidden;
+      transform: scale(0.8);
+      pointer-events: none;
     }
     .image-container:hover:not(.bursting):not(.revealed) {
       transform: scale(1.02);
@@ -164,7 +173,7 @@
     
     /* Message reveal */
     .message-container {
-      margin: 20px auto 12px auto;
+      margin: 0 auto;
       opacity: 0;
       transform: scale(0.8) translateY(20px);
       transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -172,11 +181,15 @@
       max-width: 100%;
       display: flex;
       justify-content: center;
-      align-items: center;
+      align-items: flex-start;
+      max-height: 0;
+      overflow: hidden;
     }
     .message-container.revealed {
       opacity: 1;
       transform: scale(1) translateY(0);
+      margin: 20px auto 12px auto;
+      max-height: 2000px;
       animation: messageAppear 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
     @keyframes messageAppear {
@@ -217,6 +230,8 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
       font-weight: 400;
       letter-spacing: 0.01em;
+      min-height: auto;
+      height: auto;
     }
     #msg::before {
       content: '';
@@ -426,33 +441,39 @@
           msgText.innerText = j.message;
           messageRevealed = true;
           
-          // Reveal message with magic effect
-          messageContainer.classList.add('revealed');
-          createSparkles();
+          // Hide image container with collapse animation
+          imageContainer.classList.add('hidden');
           
-          info.innerHTML = '✨ Message revealed from image! ✨';
-          info.style.background = '#e8f5e9';
-          info.style.color = '#2e7d32';
-          info.style.borderLeft = '4px solid #4caf50';
-          
-          // Start countdown timer
-          timer.classList.add('show');
-          let t = j.view_seconds || 10;
-          countdownInterval = setInterval(() => {
-            t -= 1;
-            if (t <= 0) {
-              clearInterval(countdownInterval);
-              msgText.innerText = "[Message has been hidden]";
-              msgText.style.color = '#999';
-              timer.innerText = "⏱️ Message hidden - view time expired";
-              timer.style.background = '#999';
-              timer.classList.remove('show');
-              messageContainer.style.opacity = '0.5';
-              info.innerHTML = '🔒 Message hidden';
-            } else {
-              timer.innerHTML = '⏱️ Time remaining: <strong>' + t + 's</strong>';
-            }
-          }, 1000);
+          // Small delay before revealing message for smooth transition
+          setTimeout(() => {
+            // Reveal message with magic effect
+            messageContainer.classList.add('revealed');
+            createSparkles();
+            
+            info.innerHTML = '✨ Message revealed from image! ✨';
+            info.style.background = '#e8f5e9';
+            info.style.color = '#2e7d32';
+            info.style.borderLeft = '4px solid #4caf50';
+            
+            // Start countdown timer
+            timer.classList.add('show');
+            let t = j.view_seconds || 10;
+            countdownInterval = setInterval(() => {
+              t -= 1;
+              if (t <= 0) {
+                clearInterval(countdownInterval);
+                msgText.innerText = "[Message has been hidden]";
+                msgText.style.color = '#999';
+                timer.innerText = "⏱️ Message hidden - view time expired";
+                timer.style.background = '#999';
+                timer.classList.remove('show');
+                messageContainer.style.opacity = '0.5';
+                info.innerHTML = '🔒 Message hidden';
+              } else {
+                timer.innerHTML = '⏱️ Time remaining: <strong>' + t + 's</strong>';
+              }
+            }, 1000);
+          }, 200); // Small delay for smooth transition
         }, 800); // Wait for burst animation
         
       } catch (error) {
