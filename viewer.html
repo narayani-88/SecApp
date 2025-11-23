@@ -29,10 +29,10 @@
     }
     .container {
       background: rgba(255, 255, 255, 0.98);
-      border-radius: 16px;
-      padding: 24px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-      max-width: 520px;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      max-width: 460px;
       width: 100%;
       animation: slideIn 0.5s ease;
       display: flex;
@@ -164,7 +164,7 @@
     
     /* Message reveal */
     .message-container {
-      margin: 24px auto 16px auto;
+      margin: 20px auto 12px auto;
       opacity: 0;
       transform: scale(0.8) translateY(20px);
       transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -196,16 +196,17 @@
     }
     #msg {
       white-space: pre-wrap;
-      border: 2px solid #e0e7ff;
+      border: 1.5px solid #e2e8f0;
       background: #ffffff;
-      padding: 20px 24px;
-      border-radius: 12px;
-      font-size: 16px;
-      line-height: 1.6;
-      color: #1f2937;
+      padding: 16px 18px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.55;
+      color: #1a202c;
       word-wrap: break-word;
-      box-shadow: 0 4px 16px rgba(102, 126, 234, 0.15), 
-                  0 0 0 1px rgba(102, 126, 234, 0.1);
+      box-shadow: 
+        0 1px 3px rgba(0, 0, 0, 0.08),
+        0 0 0 1px rgba(0, 0, 0, 0.04);
       position: relative;
       overflow: hidden;
       width: 100%;
@@ -214,6 +215,8 @@
       display: block;
       margin: 0 auto;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+      font-weight: 400;
+      letter-spacing: 0.01em;
     }
     #msg::before {
       content: '';

@@ -472,7 +472,17 @@ INDEX_HTML = """
       </div>
     {% endif %}
     <hr>
-    <h3>📥 Your Inbox</h3>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+      <h3 style="margin: 0;">📥 Your Inbox</h3>
+      {% if inbox %}
+        {% set viewed_count = inbox|selectattr('viewed')|list|length %}
+        {% if viewed_count > 0 %}
+          <form action="/clear-logs" method="post" style="margin: 0;">
+            <button type="submit" style="background: linear-gradient(135deg, #f44336, #d32f2f); padding: 8px 16px; font-size: 14px; margin: 0;">🗑️ Clear Logs ({{ viewed_count }})</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
     <div class="inbox">
       {% if inbox %}
         <ul>
@@ -846,6 +856,25 @@ def index():
                                  pairing_code=pairing_code,
                                  pairing_requests=pairing_requests,
                                  partners=partners)
+
+@app.route("/clear-logs", methods=["POST"])
+def clear_logs():
+    """Clear viewed messages from inbox"""
+    if db is None or messages is None:
+        return get_db_error_msg()
+    user = current_user()
+    if not user:
+        return redirect(url_for("index"))
+    
+    try:
+        # Delete all viewed messages for this user
+        _ = messages.delete_many({
+            "recipient": user["email"],
+            "viewed": True
+        })
+        return redirect(url_for("index"))
+    except (ServerSelectionTimeoutError, ConnectionFailure):
+        return get_db_error_msg()
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
